@@ -38,7 +38,7 @@ encoding stands in for the size.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pytest
@@ -48,6 +48,7 @@ from btclib.key import PrvKeyData, PubKeyData
 from btclib_ecc.curves import mult
 
 from btclib_wallet import bip322, dlc
+from btclib_wallet.dlc import oracle
 from tests.dlc.dlc_vectors_test import _TX, _dlc
 from tests.exception_family_test import TYPE_ERRORS, VALUE_ERRORS
 
@@ -70,6 +71,22 @@ _DLC_PUB = _DLC_TERMS.offer.funding_pub_key
 _DLC_POINT = mult(5)
 _DLC_ADAPTOR = dlc.adaptor_sign(_DLC_TERMS, _DLC_TX, _DLC_KEY, _DLC_POINT, bytes(32))
 _DLC_OTHER = dlc.adaptor_sign(_DLC_TERMS, _DLC_TX, _DLC_KEY, mult(6), bytes(32))
+
+# the oracle: an enum event of two outcomes with its announcement and the
+# attestation of the first, and the same event under another id
+_ORACLE_KEY = 7
+_ORACLE_NONCE = 11
+_ORACLE_EVENT = oracle.OracleEvent(
+    nonces=(mult(_ORACLE_NONCE)[0].to_bytes(32, "big"),),
+    maturity_epoch=1,
+    descriptor=oracle.EnumEventDescriptor(outcomes=("a", "b")),
+    event_id="e",
+)
+_ORACLE_ANNOUNCEMENT = oracle.sign_announcement(_ORACLE_EVENT, _ORACLE_KEY)
+_ORACLE_ATTESTATION = oracle.sign_attestation(
+    _ORACLE_ANNOUNCEMENT, ("a",), _ORACLE_KEY, (_ORACLE_NONCE,)
+)
+_ORACLE_OTHER_EVENT = replace(_ORACLE_EVENT, event_id="f")
 
 # a value of a declared type that no valid input carries, spelled per
 # position because a hand-written call knows which alias each of its
@@ -131,6 +148,28 @@ _CASES = (
             4: (1, 2),
         },
         ecc=True,
+    ),
+    _Case(
+        "dlc.verify_announcement",
+        dlc.verify_announcement,
+        (_ORACLE_ANNOUNCEMENT,),
+        # the signature of another event
+        {0: replace(_ORACLE_ANNOUNCEMENT, event=_ORACLE_OTHER_EVENT)},
+        # a signature of the wrong size
+        {0: replace(_ORACLE_ANNOUNCEMENT, signature=bytes(63))},
+    ),
+    _Case(
+        "dlc.verify_attestation",
+        dlc.verify_attestation,
+        (_ORACLE_ANNOUNCEMENT, _ORACLE_ATTESTATION),
+        # an announcement of another event, an outcome the signature does
+        # not sign
+        {
+            0: replace(_ORACLE_ANNOUNCEMENT, event=_ORACLE_OTHER_EVENT),
+            1: replace(_ORACLE_ATTESTATION, outcomes=("b",)),
+        },
+        # a signature of the wrong size
+        {1: replace(_ORACLE_ATTESTATION, signatures=(bytes(63),))},
     ),
 )
 
